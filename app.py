@@ -4,62 +4,122 @@ import re
 import os
 
 # Sahifa sozlamalari
-st.set_page_config(page_title="TR-UZ Korpus", layout="wide")
-st.title("🇹🇷🇺🇿 Parallel Korpus Qidiruv Tizimi")
+st.set_page_config(page_title="TR-UZ Parallel Korpus", layout="wide")
+
+# Maxsus dizayn (Och havorang va uslublar)
+st.markdown("""
+    <style>
+    .main {
+        background-color: #f0f8ff;
+    }
+    .stats-container {
+        background-color: #e3f2fd;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 25px;
+        border: 1px solid #bbdefb;
+    }
+    .result-card {
+        background-color: white;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 5px solid #2196f3;
+        margin-bottom: 10px;
+        box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    }
+    mark {
+        background: yellow;
+        font-weight: bold;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # Ma'lumotlarni yuklash
 @st.cache_data
 def load_data():
-    # DIQQAT: Fayl nomi GitHub-dagi bilan bir xil bo'lishi shart!
     file_name = "coliqushi.tr_uz.xlsx" 
     if os.path.exists(file_name):
-        return pd.read_excel(file_name).fillna('')
+        df = pd.read_excel(file_name).fillna('')
+        # So'zlar sonini hisoblash (taxminiy)
+        total_words = df.iloc[:, 1:3].astype(str).apply(lambda x: x.str.split().str.len()).sum().sum()
+        return df, len(df), total_words
     else:
-        st.error(f"Xatolik: {file_name} fayli topilmadi! Iltimos, GitHub-ga yuklanganini tekshiring.")
-        return pd.DataFrame()
+        return pd.DataFrame(), 0, 0
 
-df = load_data()
+df, total_texts, total_words_count = load_data()
 
-# Qidiruv paneli
-st.sidebar.header("Qidiruv paneli")
-uz_word = st.sidebar.text_input("O'zbekcha o'zak:", placeholder="Masalan: gul")
-tr_word = st.sidebar.text_input("Turkcha o'zak:", placeholder="Masalan: çiçek")
+# 1. Sarlavha va Statistika (Och havorang blokda)
+st.markdown(f"""
+    <div class="stats-container">
+        <h1 style='color: #0d47a1; margin-bottom: 0;'>Turkcha-O'zbekcha Parallel Korpus</h1>
+        <p style='font-size: 1.2rem; color: #1565c0;'>
+            <b>{total_texts:,}</b> matnlar | <b>{total_words_count:,}</b> so'zlar | <b>Paralel</b>
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
-if st.sidebar.button("🔍 IZLASH"):
-    if not uz_word and not tr_word:
-        st.warning("Iltimos, so'z kiriting!")
-    else:
-        # So'z o'zagi bo'yicha regex (word boundary \b bilan)
-        uz_pat = rf'\b{re.escape(uz_word)}\w*' if uz_word else ""
-        tr_pat = rf'\b{re.escape(tr_word)}\w*' if tr_word else ""
+# 2. Qidiruv paneli (Tepada)
+st.subheader("🔍 Qidiruv va Filtrlash")
+col1, col2, col3 = st.columns([2, 1, 1])
 
-        results = []
-        for _, row in df.iterrows():
-            try:
-                # 1-ustun TR, 2-ustun UZ (Sizning Excelingiz bo'yicha)
-                txt_tr = str(row.iloc[1])
-                txt_uz = str(row.iloc[2])
+with col1:
+    search_query = st.text_input("Kalit so'zni kiriting:", placeholder="Masalan: kitob yoki kitap")
 
-                m_uz = re.search(uz_pat, txt_uz, re.I) if uz_pat else True
-                m_tr = re.search(tr_pat, txt_tr, re.I) if tr_pat else True
+with col2:
+    lang_filter = st.selectbox("Qidiruv tili:", 
+                               ["Ikki tildan", "Faqat turk tilidan", "Faqat o'zbek tilidan"])
 
-                if m_uz and m_tr:
-                    def mark(text, word):
-                        if not word: return text
-                        return re.sub(rf'(\b{re.escape(word)}\w*)', r'<mark style="background:yellow; font-weight:bold">\1</mark>', text, flags=re.I)
-                    
-                    res_tr = mark(txt_tr, tr_word if tr_word else None)
-                    res_uz = mark(txt_uz, uz_word if uz_word else None)
-                    results.append((res_tr, res_uz))
-            except: continue
+with col3:
+    limit_filter = st.selectbox("Natijalar soni:", 
+                                ["10 ta", "20 ta", "Barchasi"])
 
-        if results:
-            st.success(f"{len(results)} ta natija topildi.")
-            for r_tr, r_uz in results:
-                st.markdown(f"**TR:** {r_tr}", unsafe_allow_html=True)
-                st.markdown(f"**UZ:** {r_uz}", unsafe_allow_html=True)
-                st.divider()
-        else:
-            st.info("Hech narsa topilmadi.")
+# Qidiruv logikasi
+if search_query:
+    limit = 10 if limit_filter == "10 ta" else 20 if limit_filter == "20 ta" else 1000000
+    
+    results = []
+    search_pat = rf'\b{re.escape(search_query)}\w*'
+    
+    for _, row in df.iterrows():
+        txt_tr = str(row.iloc[1])
+        txt_uz = str(row.iloc[2])
+        
+        found_tr = re.search(search_pat, txt_tr, re.I)
+        found_uz = re.search(search_pat, txt_uz, re.I)
+        
+        match = False
+        if lang_filter == "Ikki tildan" and (found_tr or found_uz):
+            match = True
+        elif lang_filter == "Faqat turk tilidan" and found_tr:
+            match = True
+        elif lang_filter == "Faqat o'zbek tilidan" and found_uz:
+            match = True
+            
+        if match:
+            # Highlight funksiyasi
+            def mark(text, word):
+                return re.sub(rf'(\b{re.escape(word)}\w*)', r'<mark>\1</mark>', text, flags=re.I)
+            
+            results.append({
+                "tr": mark(txt_tr, search_query),
+                "uz": mark(txt_uz, search_query)
+            })
+            if len(results) >= limit:
+                break
+
+    # 3. Natijalarni chiqarish
+    st.info(f"Jami topilgan natijalar: {len(results)} ta")
+    
+    # Ikki kalonkada chiqarish
+    for res in results:
+        with st.container():
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"""<div class="result-card"><b>TR:</b><br>{res['tr']}</div>""", unsafe_allow_html=True)
+            with c2:
+                st.markdown(f"""<div class="result-card"><b>UZ:</b><br>{res['uz']}</div>""", unsafe_allow_html=True)
+
 else:
-    st.info("Chap tomondan so'z kiriting.")
+    st.write("---")
+    st.info("Tizimdan foydalanish uchun yuqoridagi maydonga so'z kiriting.")
